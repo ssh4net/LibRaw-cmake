@@ -630,10 +630,15 @@ if (LIBRAW_INSTALL)
 
     if(NOT BUILD_SHARED_LIBS AND "${CMAKE_CXX_SIMULATE_ID}" STREQUAL "MSVC")
         message("ClangCl does not support pdb generation with static libraries")
-    elseif(MSVC)
-        install(FILES ${PROJECT_BINARY_DIR}/raw.pdb ${PROJECT_BINARY_DIR}/raw_r.pdb
+    elseif(MSVC AND BUILD_SHARED_LIBS)
+        install(FILES
+                $<$<CONFIG:Debug>:${PROJECT_BINARY_DIR}/Debug/rawd.pdb>
+                $<$<CONFIG:Debug>:${PROJECT_BINARY_DIR}/Debug/raw_rd.pdb>
+                $<$<CONFIG:RelWithDebInfo>:${PROJECT_BINARY_DIR}/RelWithDebInfo/raw.pdb>
+                $<$<CONFIG:RelWithDebInfo>:${PROJECT_BINARY_DIR}/RelWithDebInfo/raw_r.pdb>
                 DESTINATION ${CMAKE_INSTALL_LIBDIR}
                 CONFIGURATIONS Debug RelWithDebInfo
+                OPTIONAL
                )
     endif()
 
@@ -713,7 +718,7 @@ endmacro(LIBRAW_BUILD_SAMPLES)
 if(ENABLE_EXAMPLES)
     LIBRAW_BUILD_SAMPLES(simple_dcraw.cpp raw)
 
-    if(EXISTS mem_image.cpp)
+    if(EXISTS ${LIBRAW_PATH}/samples/mem_image.cpp)
         LIBRAW_BUILD_SAMPLES(mem_image.cpp raw)
     else()
         LIBRAW_BUILD_SAMPLES(mem_image_sample.cpp raw)
@@ -723,6 +728,8 @@ if(ENABLE_EXAMPLES)
     LIBRAW_BUILD_SAMPLES(4channels.cpp raw)
     LIBRAW_BUILD_SAMPLES(unprocessed_raw.cpp raw)
     LIBRAW_BUILD_SAMPLES(raw-identify.cpp raw)
+    LIBRAW_BUILD_SAMPLES(rawtextdump.cpp raw)
+    LIBRAW_BUILD_SAMPLES(openbayer_sample.cpp raw)
     LIBRAW_BUILD_SAMPLES(multirender_test.cpp raw)
     LIBRAW_BUILD_SAMPLES(postprocessing_benchmark.cpp raw)
 
