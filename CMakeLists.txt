@@ -91,6 +91,14 @@ option(ENABLE_X3FTOOLS             "Build library with Foveon X3F support       
 option(ENABLE_6BY9RPI              "Build library with Raspberry Pi RAW support     (default=OFF)"                OFF)
 option(LIBRAW_UNINSTALL_TARGET     "Add a custom target to ease removal of installed targets"        ${MASTER_PROJECT})
 option(LIBRAW_INSTALL              "Generate the install target."                                    ${MASTER_PROJECT})
+option(ENABLE_DNGSDK               "Build with Adobe DNG SDK support"                                OFF)
+set(DNGSDK_ROOT "" CACHE PATH "Prefix containing the dng_sdk CMake package and its dependencies")
+
+# The threaded examples include C sources. Library-only consumers can keep a
+# C++-only toolchain when examples are disabled.
+if(ENABLE_EXAMPLES)
+    enable_language(C)
+endif()
 
 set(RAWSPEED_RPATH           "RawSpeed"           CACHE STRING
     "Relative path to extra RawSpeed codec     (default=RawSpeed)")
@@ -124,6 +132,7 @@ include(MacroOptionalFindPackage)
 
 set(LIBRAW_PC_LIBS_PRIVATE "")
 set(LIBRAW_PC_REQUIRES_PRIVATE "")
+set(LIBRAW_PC_CFLAGS "")
 
 # Math library check
 
@@ -210,7 +219,7 @@ MACRO_BOOL_TO_01(JPEG8_FOUND LIBRAW_USE_DNGLOSSYCODEC)
 # OpenMP check
 set(OPENMP_SUPPORT_CAN_BE_COMPILED false)
 if(ENABLE_OPENMP)
-    find_package(OpenMP)
+    find_package(OpenMP COMPONENTS CXX)
     if(OpenMP_FOUND)
         set(OPENMP_SUPPORT_CAN_BE_COMPILED true)
     endif()
@@ -370,8 +379,8 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/data/libraw_config.h.cmake ${CM
 # are preferred over the already installed ones
 set(CMAKE_INCLUDE_DIRECTORIES_PROJECT_BEFORE ON)
 
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/
-                    ${LIBRAW_PATH}/
+include_directories(BEFORE "${CMAKE_CURRENT_BINARY_DIR}/"
+                          "${LIBRAW_PATH}/"
                    )
 
 # -- Log messages about configuration ------------------------------------------------------------------
@@ -487,9 +496,10 @@ if(NOT BUILD_SHARED_LIBS)
     target_compile_definitions(raw PUBLIC LIBRAW_NODLL)
 endif()
 
-target_include_directories(raw
+target_include_directories(raw BEFORE
         PUBLIC
             $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/libraw>
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
             $<BUILD_INTERFACE:${LIBRAW_PATH}>)
 
 target_link_libraries(raw PUBLIC ${MATH_LIBRARY})
@@ -556,9 +566,10 @@ set_target_properties(raw PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(raw_r PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_link_libraries(raw_r PUBLIC ${MATH_LIBRARY})
-target_include_directories(raw_r
+target_include_directories(raw_r BEFORE
         PUBLIC
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/libraw>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
         $<BUILD_INTERFACE:${LIBRAW_PATH}>)
 
 if(WIN32)
@@ -596,6 +607,31 @@ set_target_properties(raw_r PROPERTIES VERSION     ${RAW_LIB_SO_VERSION_STRING})
 set_target_properties(raw_r PROPERTIES SOVERSION   ${RAW_LIB_SO_CUR_VERSION})
 set_target_properties(raw_r PROPERTIES OUTPUT_NAME "raw_r")
 set_target_properties(raw_r PROPERTIES COMPILE_PDB_NAME "raw_r")
+
+if(ENABLE_DNGSDK)
+    # Keep dependency lookup local to this integration and compatible with
+    # CMake 3.12 (list(PREPEND) requires a newer CMake).
+    set(_libraw_saved_prefix_path "${CMAKE_PREFIX_PATH}")
+    if(DNGSDK_ROOT)
+        list(INSERT CMAKE_PREFIX_PATH 0 "${DNGSDK_ROOT}")
+    endif()
+    find_package(dng_sdk CONFIG REQUIRED)
+    set(CMAKE_PREFIX_PATH "${_libraw_saved_prefix_path}")
+    unset(_libraw_saved_prefix_path)
+
+    foreach(_libraw_target raw raw_r)
+        target_compile_definitions(${_libraw_target} PUBLIC USE_DNGSDK)
+        if(WIN32)
+            target_compile_definitions(${_libraw_target} PUBLIC NOMINMAX)
+        endif()
+        target_link_libraries(${_libraw_target} PUBLIC dng_sdk::dng_sdk)
+    endforeach()
+    string(APPEND LIBRAW_PC_REQUIRES_PRIVATE " dng_sdk")
+    string(APPEND LIBRAW_PC_CFLAGS " -DUSE_DNGSDK")
+    if(WIN32)
+        string(APPEND LIBRAW_PC_CFLAGS " -DNOMINMAX")
+    endif()
+endif()
 
 # -- Files to install -------------------------------------------------------------------------------------
 if (LIBRAW_INSTALL)
@@ -646,6 +682,11 @@ if (LIBRAW_INSTALL)
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/FindLibRaw.cmake
             DESTINATION ${CMAKE_INSTALL_DATADIR}/cmake/libraw)
 
+    # Installed consumers need the same LCMS finders as this build.
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/FindLCMS2.cmake
+                  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/FindLCMS.cmake
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libraw)
+
     # Install doc data files.
     if(NOT MSVC)
         install(FILES       ${LIBRAW_PATH}/COPYRIGHT
@@ -677,15 +718,26 @@ if (LIBRAW_INSTALL)
     configure_package_config_file(
         cmake/${PROJECT_NAME}Config.cmake.in
         cmake/${PROJECT_NAME}Config.cmake
-        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/)
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
 
     install(FILES
         ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}Config.cmake
         ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}ConfigVersion.cmake
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/)
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
 
     install(EXPORT ${PROJECT_NAME}Targets
-        NAMESPACE libraw:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/)
+        NAMESPACE libraw:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
+
+    # Keep explicit legacy libraw_DIR/Targets paths working while installing
+    # the package in the standard prefix-search directory above.
+    foreach(_libraw_file ${PROJECT_NAME}Config ${PROJECT_NAME}Targets)
+        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/cmake/legacy/${_libraw_file}.cmake"
+            "include(\"\${CMAKE_CURRENT_LIST_DIR}/${PROJECT_NAME}/${_libraw_file}.cmake\")\n")
+        install(FILES "${CMAKE_CURRENT_BINARY_DIR}/cmake/legacy/${_libraw_file}.cmake"
+                DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake)
+    endforeach()
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}ConfigVersion.cmake
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake)
 endif(LIBRAW_INSTALL)
 
 # -- Compile LibRaw Examples --------------------------------------------------------------------------------

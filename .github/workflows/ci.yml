@@ -22,6 +22,9 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
+    - run: python -m unittest discover -s tests -v
+      name: Test CMake integration
+
     - run: git clone $LIBRAW_GIT -b ${{ matrix.libraw_ref }}
       name: Clone LibRaw
 

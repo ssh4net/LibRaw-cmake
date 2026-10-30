@@ -9,6 +9,6 @@ URL: http://www.libraw.org
 Requires:
 Version: @RAW_LIB_VERSION_STRING@
 Libs: -L${libdir} -lraw_r
-Cflags: -I${includedir} -I${includedir}/libraw
+Cflags: -I${includedir} -I${includedir}/libraw@LIBRAW_PC_CFLAGS@
 Libs.private: @LIBRAW_PC_LIBS_PRIVATE@
 Requires.private: @LIBRAW_PC_REQUIRES_PRIVATE@
